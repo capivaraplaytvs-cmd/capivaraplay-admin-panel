@@ -8,8 +8,10 @@
   let token = sessionStorage.getItem("capivara_admin_token") || "";
   let refreshToken = sessionStorage.getItem("capivara_admin_refresh_token") || "";
   let expiresAt = Number(sessionStorage.getItem("capivara_admin_expires_at")) || 0;
-  let state = { banners: { mode: "rotate", selected: 0, items: [] }, servers: {} };
+  let state = { banners: { mode: "rotate", selected: 0, items: [] }, servers: {}, appUpdate: null };
   let pendingDeletes = [];
+  let pendingUpdateCleanup = [];
+  let stagedUpdatePaths = [];
   const serverIds = ["srv_extreme", "srv_deluxe", "srv_lite"];
 
   function message(target, text, error = false) {
@@ -101,30 +103,64 @@
     fixedWrap.classList.toggle("hidden", state.banners.mode !== "fixed" || items.length === 0);
     const fixed = $("fixedBanner");
     fixed.replaceChildren();
+    const enabledItems = items.filter(item => item.enabled !== false);
     items.forEach((item, index) => {
-      const option = document.createElement("option");
-      option.value = String(index);
-      option.textContent = `${index + 1}. ${item.name || `Banner ${index + 1}`}`;
-      fixed.append(option);
+      const enabledIndex = item.enabled === false ? -1 : enabledItems.indexOf(item);
+      if (enabledIndex >= 0) {
+        const option = document.createElement("option");
+        option.value = String(enabledIndex);
+        option.textContent = `${index + 1}. ${item.name || `Banner ${index + 1}`}`;
+        fixed.append(option);
+      }
       const row = document.createElement("div"); row.className = "banner-row";
       const image = document.createElement("img"); image.src = item.url; image.alt = item.name || `Banner ${index + 1}`; image.loading = "lazy";
       const title = document.createElement("div"); title.className = "banner-name"; title.textContent = `${index + 1}. ${item.name || "Banner"}${item.enabled === false ? " · desativado" : ""}`;
       const actions = document.createElement("div"); actions.className = "banner-actions";
       const active = document.createElement("input"); active.type = "checkbox"; active.checked = item.enabled !== false; active.title = "Mostrar no app";
-      active.addEventListener("change", () => { item.enabled = active.checked; renderBanners(); });
+      active.addEventListener("change", () => {
+        const selected = enabledItems[state.banners.selected] || null;
+        item.enabled = active.checked;
+        const current = items.filter(candidate => candidate.enabled !== false);
+        const nextIndex = selected ? current.indexOf(selected) : -1;
+        state.banners.selected = nextIndex >= 0 ? nextIndex : Math.min(state.banners.selected, Math.max(0, current.length - 1));
+        renderBanners();
+      });
       const up = button("↑", "Mover para cima", () => moveBanner(index, -1)); up.disabled = index === 0;
       const down = button("↓", "Mover para baixo", () => moveBanner(index, 1)); down.disabled = index === items.length - 1;
       const remove = button("×", "Remover banner", () => {
         const [removed] = state.banners.items.splice(index, 1);
         if (removed?.id) pendingDeletes.push(removed.id);
-        state.banners.selected = Math.min(state.banners.selected, Math.max(0, state.banners.items.length - 1));
+        state.banners.selected = Math.min(state.banners.selected, Math.max(0, state.banners.items.filter(item => item.enabled !== false).length - 1));
         renderBanners();
       }, true);
       const activeLabel = document.createElement("label"); activeLabel.className = "banner-name"; activeLabel.append(active, document.createTextNode(" Ativo"));
-      actions.append(activeLabel, up, down, remove); row.append(image, title, actions); list.append(row);
+      const makeFixed = document.createElement("button");
+      makeFixed.type = "button";
+      makeFixed.className = `fixed-choice${state.banners.mode === "fixed" && state.banners.selected === enabledIndex ? " active" : ""}`;
+      makeFixed.textContent = state.banners.mode === "fixed" && state.banners.selected === enabledIndex ? "Fixo ✓" : "Usar fixo";
+      makeFixed.disabled = item.enabled === false;
+      makeFixed.title = "Exibir somente este banner no app";
+      makeFixed.addEventListener("click", () => { state.banners.mode = "fixed"; state.banners.selected = enabledIndex; renderBanners(); });
+      actions.append(activeLabel, makeFixed, up, down, remove); row.append(image, title, actions); list.append(row);
     });
-    fixed.value = String(Math.min(state.banners.selected || 0, Math.max(0, items.length - 1)));
+    fixed.value = String(Math.min(state.banners.selected || 0, Math.max(0, enabledItems.length - 1)));
     $("bannerMode").value = state.banners.mode === "fixed" ? "fixed" : "rotate";
+    renderUpdate();
+  }
+  function renderUpdate() {
+    const release = state.appUpdate;
+    $("currentUpdate").textContent = release
+      ? `Publicada: ${release.versionName} (código ${release.versionCode}) · ${(Number(release.sizeBytes) / 1024 / 1024).toFixed(1)} MB`
+      : "Nenhuma atualização publicada.";
+    $("removeUpdate").classList.toggle("hidden", !release);
+    if (release) {
+      $("updateVersionName").value = release.versionName || "";
+      $("updateVersionCode").value = String(release.versionCode || "");
+      $("updateNotes").value = release.notes || "";
+    }
+  }
+  function updateObjectPaths(release) {
+    return Array.isArray(release?.parts) ? release.parts.map(part => String(part.path || "")).filter(Boolean) : [];
   }
   function button(text, title, action, danger = false) {
     const el = document.createElement("button"); el.type = "button"; el.className = `icon-button${danger ? " remove" : ""}`; el.textContent = text; el.title = title; el.setAttribute("aria-label", title); el.addEventListener("click", action); return el;
@@ -132,8 +168,11 @@
   function moveBanner(index, delta) {
     const next = index + delta;
     if (next < 0 || next >= state.banners.items.length) return;
+    const selected = state.banners.items.filter(item => item.enabled !== false)[state.banners.selected] || null;
     [state.banners.items[index], state.banners.items[next]] = [state.banners.items[next], state.banners.items[index]];
-    if (state.banners.selected === index) state.banners.selected = next; else if (state.banners.selected === next) state.banners.selected = index;
+    const enabled = state.banners.items.filter(item => item.enabled !== false);
+    const selectedIndex = selected ? enabled.indexOf(selected) : -1;
+    if (selectedIndex >= 0) state.banners.selected = selectedIndex;
     renderBanners();
   }
   async function loadConfig() {
@@ -144,6 +183,7 @@
     state = {
       banners: { mode: source.banners?.mode === "fixed" ? "fixed" : "rotate", selected: Number(source.banners?.selected) || 0, items: items.filter(item => item && typeof item.url === "string").slice(0, 30) },
       servers: source.servers && typeof source.servers === "object" ? source.servers : {},
+      appUpdate: source.appUpdate && typeof source.appUpdate === "object" ? source.appUpdate : null,
     };
     serverIds.forEach(id => { $(id).value = state.servers[id] || ""; });
     renderBanners();
@@ -163,6 +203,49 @@
     if (!response.ok) throw new Error(`Falha ao enviar imagem (${response.status}).`);
     return { id: objectName, name: file.name, enabled: true, url: `${base}/storage/v1/object/public/capivara-banners/${objectName}` };
   }
+  async function uploadUpdate(file) {
+    if (!file.name.toLowerCase().endsWith(".apk") || file.size < 4 || file.size > 180 * 1024 * 1024) throw new Error("Escolha um APK válido de até 180 MB.");
+    const versionName = $("updateVersionName").value.trim();
+    const versionCode = Number($("updateVersionCode").value);
+    if (!versionName || versionName.length > 40 || !Number.isSafeInteger(versionCode) || versionCode < 1) throw new Error("Preencha nome e número inteiro da versão antes de enviar o APK.");
+    const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    if (header[0] !== 0x50 || header[1] !== 0x4b) throw new Error("O arquivo selecionado não parece ser um APK.");
+    const hashBytes = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    const sha256 = [...new Uint8Array(hashBytes)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    const releaseId = `${versionCode}-${crypto.randomUUID()}`;
+    const chunkSize = 40 * 1024 * 1024;
+    const parts = [];
+    const uploaded = [];
+    try {
+      const count = Math.ceil(file.size / chunkSize);
+      for (let index = 0; index < count; index++) {
+        const path = `${versionCode}/${releaseId}/part-${String(index + 1).padStart(2, "0")}.bin`;
+        const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+        const chunk = file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize), "application/octet-stream");
+        const response = await authenticatedRequest(`/storage/v1/object/capivara-updates/${encodedPath}`, {
+          method: "POST", headers: { "Content-Type": "application/octet-stream", "Cache-Control": "public, max-age=31536000", "x-upsert": "false" }, body: chunk,
+        });
+        if (!response.ok) throw new Error(`Falha ao enviar parte ${index + 1} do APK (${response.status}). Confira a configuração de armazenamento do Supabase.`);
+        uploaded.push(path);
+        parts.push({ path, url: `${base}/storage/v1/object/public/capivara-updates/${encodedPath}` });
+        message($("updateStatus"), `Enviando APK: parte ${index + 1} de ${count}…`);
+      }
+    } catch (error) {
+      if (uploaded.length) await deleteUpdateObjects(uploaded).catch(() => {});
+      throw error;
+    }
+    pendingUpdateCleanup.push(...updateObjectPaths(state.appUpdate), ...stagedUpdatePaths);
+    stagedUpdatePaths = uploaded;
+    state.appUpdate = { versionName, versionCode, notes: $("updateNotes").value.trim().slice(0, 5000), sizeBytes: file.size, sha256, parts };
+    renderUpdate();
+  }
+  async function deleteUpdateObjects(paths) {
+    const unique = [...new Set(paths.filter(Boolean))];
+    if (!unique.length) return;
+    await api("/storage/v1/object/capivara-updates", {
+      method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: unique }),
+    });
+  }
 
   if (!isAdminConfigValid()) {
     showSetup("O painel está pronto. Para conectar, crie o projeto Supabase e configure SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY nas variáveis do repositório GitHub. Instruções em admin-panel/README.md.");
@@ -180,6 +263,20 @@
   $("logout").addEventListener("click", () => { clearSession(); admin.classList.add("hidden"); loginCard.classList.remove("hidden"); $("password").value = ""; });
   $("bannerMode").addEventListener("change", event => { state.banners.mode = event.target.value; renderBanners(); });
   $("fixedBanner").addEventListener("change", event => { state.banners.selected = Number(event.target.value) || 0; });
+  $("updateFile").addEventListener("change", async event => {
+    const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
+    const input = $("updateFile"); input.disabled = true;
+    try { message($("updateStatus"), "Preparando o APK…"); await uploadUpdate(file); message($("updateStatus"), "APK enviado. Clique em Salvar alterações para publicar a atualização."); }
+    catch (error) { message($("updateStatus"), error.message, true); }
+    finally { input.disabled = false; }
+  });
+  $("removeUpdate").addEventListener("click", () => {
+    pendingUpdateCleanup.push(...updateObjectPaths(state.appUpdate), ...stagedUpdatePaths);
+    stagedUpdatePaths = [];
+    state.appUpdate = null;
+    $("updateVersionName").value = ""; $("updateVersionCode").value = ""; $("updateNotes").value = "";
+    renderUpdate(); message($("updateStatus"), "Versão marcada para retirada. Clique em Salvar alterações para publicar.");
+  });
   $("bannerFile").addEventListener("change", async event => {
     const files = [...event.target.files]; event.target.value = ""; if (!files.length) return;
     const status = $("saveStatus"); message(status, "Enviando banners…");
@@ -191,16 +288,18 @@
     try {
       const servers = {};
       serverIds.forEach(id => { servers[id] = normalizeBaseUrl($(id).value); });
-      const config = { banners: { mode: state.banners.mode, selected: Number($("fixedBanner").value) || 0, items: state.banners.items.map(item => ({ id: item.id, name: String(item.name || "Banner").slice(0, 120), url: item.url, enabled: item.enabled !== false })) }, servers };
+      const config = { banners: { mode: state.banners.mode, selected: Number($("fixedBanner").value) || 0, items: state.banners.items.map(item => ({ id: item.id, name: String(item.name || "Banner").slice(0, 120), url: item.url, enabled: item.enabled !== false })) }, servers, appUpdate: state.appUpdate };
       await api("/rest/v1/remote_app_config?app_id=eq.capivaraplay-block", { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ config, updated_at: new Date().toISOString() }) });
       if (pendingDeletes.length) {
         await api("/storage/v1/object/capivara-banners", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: pendingDeletes }) });
         pendingDeletes = [];
       }
-      state = config; renderBanners(); message(status, "Alterações publicadas. O app atualizará a configuração ao abrir ou voltar para primeiro plano.");
+      let updateCleanupNotice = "";
+      try { await deleteUpdateObjects(pendingUpdateCleanup); pendingUpdateCleanup = []; stagedUpdatePaths = []; }
+      catch (_) { updateCleanupNotice = " A versão anterior permaneceu guardada no armazenamento."; }
+      state = config; renderBanners(); message(status, `Alterações publicadas. O app atualizará a configuração ao abrir ou voltar para primeiro plano.${updateCleanupNotice}`);
     } catch (error) { message(status, error.message, true); }
     finally { save.disabled = false; }
   });
   if (token && isAdminConfigValid()) enterPanel().catch(error => { clearSession(); message($("loginStatus"), error.message, true); });
 })();
-
