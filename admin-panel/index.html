@@ -31,6 +31,21 @@
         <div class="hint">Formatos: JPG, PNG ou WebP. Recomendado: 16:9, até 12 MB por imagem.</div>
       </div>
       <div class="card">
+        <div class="section-heading"><div><h2>Atualização do aplicativo</h2><p>Publique uma versão nova para aparecer em Mais → Sobre → Verificar atualizações.</p></div></div>
+        <div class="update-fields">
+          <label>Nome da versão<input id="updateVersionName" maxlength="40" placeholder="Ex.: 0.1.24-block"></label>
+          <label>Número da versão<input id="updateVersionCode" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex.: 25"></label>
+        </div>
+        <label class="release-notes-label">O que mudou<textarea id="updateNotes" maxlength="5000" rows="4" placeholder="Resumo das melhorias desta versão"></textarea></label>
+        <div class="update-actions">
+          <label class="upload primary">Enviar APK<input id="updateFile" type="file" accept=".apk,application/vnd.android.package-archive"></label>
+          <button id="removeUpdate" class="quiet hidden" type="button">Retirar versão publicada</button>
+        </div>
+        <div id="updateStatus" class="status" role="status"></div>
+        <div id="currentUpdate" class="hint"></div>
+        <div class="hint">O APK é enviado em partes de até 40 MB. No aparelho, o app confere o arquivo e abre o instalador do Android; a pessoa confirma a instalação.</div>
+      </div>
+      <div class="card">
         <div class="section-heading"><div><h2>Endereços dos servidores</h2><p>Altera os endereços base usados pelo app CapivaraPlay Block.</p></div></div>
         <div class="server-grid">
           <label>Capivara Extreme<input id="srv_extreme" inputmode="url" placeholder="https://servidor.example"></label>
@@ -46,4 +61,3 @@
   <script src="app.js" defer></script>
 </body>
 </html>
-
