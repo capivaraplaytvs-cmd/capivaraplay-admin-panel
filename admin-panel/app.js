@@ -104,6 +104,11 @@
     const fixed = $("fixedBanner");
     fixed.replaceChildren();
     const enabledItems = items.filter(item => item.enabled !== false);
+    const fallbackIndex = Math.min(Number(state.banners.selected) || 0, Math.max(0, enabledItems.length - 1));
+    const rememberedIndex = enabledItems.findIndex(item => String(item.id || "") === String(state.banners.fixedId || ""));
+    const selectedIndex = rememberedIndex >= 0 ? rememberedIndex : fallbackIndex;
+    state.banners.selected = selectedIndex;
+    state.banners.fixedId = String(enabledItems[selectedIndex]?.id || "");
     items.forEach((item, index) => {
       const enabledIndex = item.enabled === false ? -1 : enabledItems.indexOf(item);
       if (enabledIndex >= 0) {
@@ -118,11 +123,12 @@
       const actions = document.createElement("div"); actions.className = "banner-actions";
       const active = document.createElement("input"); active.type = "checkbox"; active.checked = item.enabled !== false; active.title = "Mostrar no app";
       active.addEventListener("change", () => {
-        const selected = enabledItems[state.banners.selected] || null;
+        const selectedId = state.banners.fixedId;
         item.enabled = active.checked;
         const current = items.filter(candidate => candidate.enabled !== false);
-        const nextIndex = selected ? current.indexOf(selected) : -1;
-        state.banners.selected = nextIndex >= 0 ? nextIndex : Math.min(state.banners.selected, Math.max(0, current.length - 1));
+        const nextItem = current.find(candidate => String(candidate.id || "") === selectedId) || current[Math.min(selectedIndex, Math.max(0, current.length - 1))] || null;
+        state.banners.selected = nextItem ? current.indexOf(nextItem) : 0;
+        state.banners.fixedId = String(nextItem?.id || "");
         renderBanners();
       });
       const up = button("↑", "Mover para cima", () => moveBanner(index, -1)); up.disabled = index === 0;
@@ -130,20 +136,24 @@
       const remove = button("×", "Remover banner", () => {
         const [removed] = state.banners.items.splice(index, 1);
         if (removed?.id) pendingDeletes.push(removed.id);
-        state.banners.selected = Math.min(state.banners.selected, Math.max(0, state.banners.items.filter(item => item.enabled !== false).length - 1));
+        const current = state.banners.items.filter(item => item.enabled !== false);
+        const found = current.findIndex(candidate => String(candidate.id || "") === String(state.banners.fixedId || ""));
+        state.banners.selected = found >= 0 ? found : Math.min(selectedIndex, Math.max(0, current.length - 1));
+        state.banners.fixedId = String(current[state.banners.selected]?.id || "");
         renderBanners();
       }, true);
       const activeLabel = document.createElement("label"); activeLabel.className = "banner-name"; activeLabel.append(active, document.createTextNode(" Ativo"));
       const makeFixed = document.createElement("button");
       makeFixed.type = "button";
-      makeFixed.className = `fixed-choice${state.banners.mode === "fixed" && state.banners.selected === enabledIndex ? " active" : ""}`;
-      makeFixed.textContent = state.banners.mode === "fixed" && state.banners.selected === enabledIndex ? "Fixo ✓" : "Usar fixo";
+      const isFixed = state.banners.mode === "fixed" && String(state.banners.fixedId || "") === String(item.id || "");
+      makeFixed.className = `fixed-choice${isFixed ? " active" : ""}`;
+      makeFixed.textContent = isFixed ? "Fixo ✓" : "Usar fixo";
       makeFixed.disabled = item.enabled === false;
       makeFixed.title = "Exibir somente este banner no app";
-      makeFixed.addEventListener("click", () => { state.banners.mode = "fixed"; state.banners.selected = enabledIndex; renderBanners(); });
+      makeFixed.addEventListener("click", () => { state.banners.mode = "fixed"; state.banners.selected = enabledIndex; state.banners.fixedId = String(item.id || ""); renderBanners(); });
       actions.append(activeLabel, makeFixed, up, down, remove); row.append(image, title, actions); list.append(row);
     });
-    fixed.value = String(Math.min(state.banners.selected || 0, Math.max(0, enabledItems.length - 1)));
+    fixed.value = String(selectedIndex);
     $("bannerMode").value = state.banners.mode === "fixed" ? "fixed" : "rotate";
     renderUpdate();
   }
@@ -168,11 +178,13 @@
   function moveBanner(index, delta) {
     const next = index + delta;
     if (next < 0 || next >= state.banners.items.length) return;
-    const selected = state.banners.items.filter(item => item.enabled !== false)[state.banners.selected] || null;
+    const enabledBefore = state.banners.items.filter(item => item.enabled !== false);
+    const selectedId = String(state.banners.fixedId || enabledBefore[state.banners.selected]?.id || "");
     [state.banners.items[index], state.banners.items[next]] = [state.banners.items[next], state.banners.items[index]];
     const enabled = state.banners.items.filter(item => item.enabled !== false);
-    const selectedIndex = selected ? enabled.indexOf(selected) : -1;
+    const selectedIndex = enabled.findIndex(item => String(item.id || "") === selectedId);
     if (selectedIndex >= 0) state.banners.selected = selectedIndex;
+    state.banners.fixedId = String(enabled[Math.max(0, state.banners.selected)]?.id || "");
     renderBanners();
   }
   async function loadConfig() {
@@ -180,8 +192,13 @@
     if (!Array.isArray(rows) || !rows[0]?.config) throw new Error("Configuração inicial não encontrada. Aplique a migração do Supabase primeiro.");
     const source = rows[0].config;
     const items = Array.isArray(source.banners?.items) ? source.banners.items : [];
+    const enabledItems = items.filter(item => item && item.enabled !== false && typeof item.url === "string");
+    const oldSelectedIndex = Math.min(Number(source.banners?.selected) || 0, Math.max(0, items.length - 1));
+    const oldSelectedItem = items[oldSelectedIndex];
+    const fixedId = String(source.banners?.fixedId || (oldSelectedItem?.enabled !== false ? oldSelectedItem?.id : "") || enabledItems[0]?.id || "");
+    const selectedIndex = Math.max(0, enabledItems.findIndex(item => String(item.id || "") === fixedId));
     state = {
-      banners: { mode: source.banners?.mode === "fixed" ? "fixed" : "rotate", selected: Number(source.banners?.selected) || 0, items: items.filter(item => item && typeof item.url === "string").slice(0, 30) },
+      banners: { mode: source.banners?.mode === "fixed" ? "fixed" : "rotate", selected: selectedIndex, fixedId, items: items.filter(item => item && typeof item.url === "string").slice(0, 30) },
       servers: source.servers && typeof source.servers === "object" ? source.servers : {},
       appUpdate: source.appUpdate && typeof source.appUpdate === "object" ? source.appUpdate : null,
     };
@@ -262,7 +279,12 @@
   });
   $("logout").addEventListener("click", () => { clearSession(); admin.classList.add("hidden"); loginCard.classList.remove("hidden"); $("password").value = ""; });
   $("bannerMode").addEventListener("change", event => { state.banners.mode = event.target.value; renderBanners(); });
-  $("fixedBanner").addEventListener("change", event => { state.banners.selected = Number(event.target.value) || 0; });
+  $("fixedBanner").addEventListener("change", event => {
+    const enabledItems = state.banners.items.filter(item => item.enabled !== false);
+    state.banners.selected = Number(event.target.value) || 0;
+    state.banners.fixedId = String(enabledItems[state.banners.selected]?.id || "");
+    renderBanners();
+  });
   $("updateFile").addEventListener("change", async event => {
     const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
     const input = $("updateFile"); input.disabled = true;
@@ -288,7 +310,9 @@
     try {
       const servers = {};
       serverIds.forEach(id => { servers[id] = normalizeBaseUrl($(id).value); });
-      const config = { banners: { mode: state.banners.mode, selected: Number($("fixedBanner").value) || 0, items: state.banners.items.map(item => ({ id: item.id, name: String(item.name || "Banner").slice(0, 120), url: item.url, enabled: item.enabled !== false })) }, servers, appUpdate: state.appUpdate };
+      const enabledItems = state.banners.items.filter(item => item.enabled !== false);
+      const selected = Math.min(Number($("fixedBanner").value) || 0, Math.max(0, enabledItems.length - 1));
+      const config = { banners: { mode: state.banners.mode, selected, fixedId: String(enabledItems[selected]?.id || ""), items: state.banners.items.map(item => ({ id: item.id, name: String(item.name || "Banner").slice(0, 120), url: item.url, enabled: item.enabled !== false })) }, servers, appUpdate: state.appUpdate };
       await api("/rest/v1/remote_app_config?app_id=eq.capivaraplay-block", { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ config, updated_at: new Date().toISOString() }) });
       if (pendingDeletes.length) {
         await api("/storage/v1/object/capivara-banners", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: pendingDeletes }) });
@@ -303,3 +327,4 @@
   });
   if (token && isAdminConfigValid()) enterPanel().catch(error => { clearSession(); message($("loginStatus"), error.message, true); });
 })();
+
