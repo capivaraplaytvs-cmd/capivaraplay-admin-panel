@@ -6,6 +6,8 @@
   const $ = id => document.getElementById(id);
   const loginCard = $("loginCard"), admin = $("admin"), notice = $("setupNotice");
   let token = sessionStorage.getItem("capivara_admin_token") || "";
+  let refreshToken = sessionStorage.getItem("capivara_admin_refresh_token") || "";
+  let expiresAt = Number(sessionStorage.getItem("capivara_admin_expires_at")) || 0;
   let state = { banners: { mode: "rotate", selected: 0, items: [] }, servers: {} };
   let pendingDeletes = [];
   const serverIds = ["srv_extreme", "srv_deluxe", "srv_lite"];
@@ -15,12 +17,67 @@
     target.classList.toggle("error", error);
   }
   function showSetup(text) { notice.textContent = text; notice.classList.remove("hidden"); }
+  function storeSession(result) {
+    token = result.access_token || "";
+    refreshToken = result.refresh_token || refreshToken;
+    const expiry = Number(result.expires_at);
+    expiresAt = expiry > 0 ? expiry * 1000 : Date.now() + (Number(result.expires_in) || 3600) * 1000;
+    sessionStorage.setItem("capivara_admin_token", token);
+    sessionStorage.setItem("capivara_admin_refresh_token", refreshToken);
+    sessionStorage.setItem("capivara_admin_expires_at", String(expiresAt));
+  }
+  function clearSession() {
+    token = ""; refreshToken = ""; expiresAt = 0;
+    sessionStorage.removeItem("capivara_admin_token");
+    sessionStorage.removeItem("capivara_admin_refresh_token");
+    sessionStorage.removeItem("capivara_admin_expires_at");
+  }
+  function showLoginAfterExpiry() {
+    clearSession();
+    admin.classList.add("hidden");
+    loginCard.classList.remove("hidden");
+    message($("loginStatus"), "A sessão do painel expirou. Entre novamente.", true);
+  }
+  async function refreshSession() {
+    if (!refreshToken) {
+      showLoginAfterExpiry();
+      throw new Error("A sessão do painel expirou. Entre novamente.");
+    }
+    const response = await fetch(`${base}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { apikey: key, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    const body = await response.text();
+    let result = null;
+    try { result = body ? JSON.parse(body) : null; } catch (_) {}
+    if (!response.ok || !result?.access_token) {
+      if (response.status === 400 || response.status === 401) showLoginAfterExpiry();
+      throw new Error(response.status === 400 || response.status === 401
+        ? "A sessão do painel expirou. Entre novamente."
+        : `Não foi possível renovar a sessão do Supabase (${response.status}).`);
+    }
+    storeSession(result);
+  }
+  async function authenticatedRequest(path, options = {}) {
+    const requiresSession = !path.startsWith("/auth/v1/token");
+    if (requiresSession && token && refreshToken && expiresAt && expiresAt <= Date.now() + 60000) await refreshSession();
+    const send = () => {
+      const headers = new Headers(options.headers || {});
+      headers.set("apikey", key);
+      headers.set("Accept", "application/json");
+      if (requiresSession && token) headers.set("Authorization", `Bearer ${token}`);
+      return fetch(`${base}${path}`, { ...options, headers });
+    };
+    let response = await send();
+    if (response.status === 401 && requiresSession && token) {
+      await refreshSession();
+      response = await send();
+    }
+    return response;
+  }
   async function api(path, options = {}) {
-    const headers = new Headers(options.headers || {});
-    headers.set("apikey", key);
-    headers.set("Accept", "application/json");
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-    const response = await fetch(`${base}${path}`, { ...options, headers });
+    const response = await authenticatedRequest(path, options);
     const body = await response.text();
     if (!response.ok) {
       let detail = body;
@@ -100,8 +157,8 @@
     if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 12 * 1024 * 1024) throw new Error("Escolha JPG, PNG ou WebP com até 12 MB.");
     const ext = file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1];
     const objectName = `${crypto.randomUUID()}.${ext}`;
-    const response = await fetch(`${base}/storage/v1/object/capivara-banners/${objectName}`, {
-      method: "POST", headers: { apikey: key, Authorization: `Bearer ${token}`, "Content-Type": file.type, "Cache-Control": "public, max-age=31536000", "x-upsert": "false" }, body: file,
+    const response = await authenticatedRequest(`/storage/v1/object/capivara-banners/${objectName}`, {
+      method: "POST", headers: { "Content-Type": file.type, "Cache-Control": "public, max-age=31536000", "x-upsert": "false" }, body: file,
     });
     if (!response.ok) throw new Error(`Falha ao enviar imagem (${response.status}).`);
     return { id: objectName, name: file.name, enabled: true, url: `${base}/storage/v1/object/public/capivara-banners/${objectName}` };
@@ -116,11 +173,11 @@
     const status = $("loginStatus"); message(status, "Conectando…");
     try {
       const result = await api("/auth/v1/token?grant_type=password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("email").value.trim(), password: $("password").value }) });
-      token = result.access_token; sessionStorage.setItem("capivara_admin_token", token);
+      storeSession(result);
       await enterPanel(); message(status, "");
-    } catch (error) { token = ""; sessionStorage.removeItem("capivara_admin_token"); message(status, error.message, true); }
+    } catch (error) { clearSession(); message(status, error.message, true); }
   });
-  $("logout").addEventListener("click", () => { token = ""; sessionStorage.removeItem("capivara_admin_token"); admin.classList.add("hidden"); loginCard.classList.remove("hidden"); $("password").value = ""; });
+  $("logout").addEventListener("click", () => { clearSession(); admin.classList.add("hidden"); loginCard.classList.remove("hidden"); $("password").value = ""; });
   $("bannerMode").addEventListener("change", event => { state.banners.mode = event.target.value; renderBanners(); });
   $("fixedBanner").addEventListener("change", event => { state.banners.selected = Number(event.target.value) || 0; });
   $("bannerFile").addEventListener("change", async event => {
@@ -144,6 +201,6 @@
     } catch (error) { message(status, error.message, true); }
     finally { save.disabled = false; }
   });
-  if (token && isAdminConfigValid()) enterPanel().catch(error => { token = ""; sessionStorage.removeItem("capivara_admin_token"); message($("loginStatus"), error.message, true); });
+  if (token && isAdminConfigValid()) enterPanel().catch(error => { clearSession(); message($("loginStatus"), error.message, true); });
 })();
 
