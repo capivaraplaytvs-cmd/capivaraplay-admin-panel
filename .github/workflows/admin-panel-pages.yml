@@ -1,0 +1,52 @@
+name: Deploy CapivaraPlay admin panel
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "admin-panel/**"
+      - ".github/workflows/admin-panel-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: capivaraplay-admin-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Set Supabase public client settings
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          python - <<'PY'
+          import json, os
+          values = {
+              "supabaseUrl": os.environ.get("SUPABASE_URL", "").strip(),
+              "publishableKey": os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip(),
+          }
+          with open("admin-panel/config.js", "w", encoding="utf-8") as output:
+              output.write("window.CAPIVARA_CONFIG = " + json.dumps(values) + ";\n")
+          PY
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: admin-panel
+      - name: Deploy site
+        id: deployment
+        uses: actions/deploy-pages@v4
+
