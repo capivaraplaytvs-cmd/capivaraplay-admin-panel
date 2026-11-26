@@ -163,6 +163,12 @@
       ? `Publicada: ${release.versionName} (código ${release.versionCode}) · ${(Number(release.sizeBytes) / 1024 / 1024).toFixed(1)} MB`
       : "Nenhuma atualização publicada.";
     $("removeUpdate").classList.toggle("hidden", !release);
+    const directUrl = base ? `${base}/functions/v1/capivaraplay-apk` : "";
+    $("directApkLink").value = directUrl;
+    $("copyDirectApk").disabled = !directUrl;
+    $("directApkHelp").textContent = release
+      ? `O link é fixo e já aponta para ${release.versionName}. Depois de enviar outra versão e salvar as alterações, este mesmo endereço baixará o APK novo como capivaraplay.apk.`
+      : "O endereço é fixo. Envie e publique o primeiro APK para ativar o download como capivaraplay.apk.";
     if (release) {
       $("updateVersionName").value = release.versionName || "";
       $("updateVersionCode").value = String(release.versionCode || "");
@@ -291,6 +297,17 @@
     try { message($("updateStatus"), "Preparando o APK…"); await uploadUpdate(file); message($("updateStatus"), "APK enviado. Clique em Salvar alterações para publicar a atualização."); }
     catch (error) { message($("updateStatus"), error.message, true); }
     finally { input.disabled = false; }
+  });
+  $("copyDirectApk").addEventListener("click", async () => {
+    const input = $("directApkLink");
+    if (!input.value) return;
+    try {
+      await navigator.clipboard.writeText(input.value);
+      message($("directApkStatus"), "Link copiado.");
+    } catch (_) {
+      input.focus(); input.select();
+      message($("directApkStatus"), "Link selecionado. Pressione Ctrl+C para copiar.");
+    }
   });
   $("removeUpdate").addEventListener("click", () => {
     pendingUpdateCleanup.push(...updateObjectPaths(state.appUpdate), ...stagedUpdatePaths);
