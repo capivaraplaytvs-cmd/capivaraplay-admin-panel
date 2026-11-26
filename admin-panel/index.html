@@ -43,6 +43,15 @@
         </div>
         <div id="updateStatus" class="status" role="status"></div>
         <div id="currentUpdate" class="hint"></div>
+        <div class="direct-apk">
+          <label for="directApkLink">Link direto do APK</label>
+          <div class="direct-apk-row">
+            <input id="directApkLink" type="url" readonly aria-label="Link direto fixo para baixar o APK">
+            <button id="copyDirectApk" class="quiet" type="button">Copiar link</button>
+          </div>
+          <div id="directApkHelp" class="hint">Este endereço permanece igual e sempre baixa a versão publicada mais recente.</div>
+          <div id="directApkStatus" class="status" role="status"></div>
+        </div>
         <div class="hint">O APK é enviado em partes de até 40 MB. No aparelho, o app confere o arquivo e abre o instalador do Android; a pessoa confirma a instalação.</div>
       </div>
       <div class="card">
