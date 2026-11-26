@@ -27,3 +27,10 @@ Para ativar a leitura da configuração remota no build do app, configure `SUPAB
 4. Na TV, abra **Mais → Sobre → Verificar atualizações**. O app baixa e confere o arquivo antes de chamar o instalador do Android.
 
 Use um APK do mesmo aplicativo, com código de versão maior e assinado pela mesma chave. O painel divide arquivos de até 180 MB em partes menores que o limite por arquivo do armazenamento gratuito.
+## Link direto fixo do APK
+
+O painel também mostra um endereço público permanente para download direto. Ele sempre entrega o APK da versão publicada mais recente como `capivaraplay.apk`, mesmo quando os arquivos enviados são divididos em partes para caber no armazenamento.
+
+Publique a função `supabase/functions/capivaraplay-apk/index.ts` no Supabase como `capivaraplay-apk` e deixe a verificação JWT desativada para permitir o download pelo link público. A configuração versionada em `supabase/config.toml` registra essa opção para o deploy via CLI. A função só lê a configuração pública `capivaraplay-block` e os objetos públicos do bucket `capivara-updates`; não usa chave secreta.
+
+Depois de selecionar o APK no painel, clique em **Salvar alterações**. O link exibido abaixo do envio não muda e passa a apontar para o novo arquivo quando a publicação termina.
